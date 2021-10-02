@@ -1,0 +1,3 @@
+[submodule "submodules/XTEA-Cipher"]
+	path = submodules/XTEA-Cipher
+	url = https://github.com/michpro/XTEA-Cipher
