@@ -32,5 +32,8 @@
 *.app
 
 # Other
+*.hex
+*.elf
+*.map
 .vscode/
 build/
