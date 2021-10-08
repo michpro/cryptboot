@@ -12,53 +12,26 @@
  * LED0       PB4
  * SW1        PC5 (external pull-up)
  */
-#define F_CPU_RESET                 (20E6/6)
-#define F_CPU                       20000000UL
-#define F_SCL                       400000UL
-#define TWI_MEM_ADDR                0xA0
-#define TWI_MEM_PAGE_SIZE           0x40
-#define TWI_FIRMWARE_AT_ADDR        0x0800
-#define TWI_CONTROL_DATA_AT         (TWI_FIRMWARE_AT_ADDR - TWI_MEM_PAGE_SIZE)
 
-#include <avr/eeprom.h>
-#include <avr/io.h>
-#include <stdbool.h>
-#include "twi_1.h"
-#include "xtea.h"
+#include "cryptboot.h"
 
-/* Memory configuration
- * BOOTEND_FUSE * 256 must be above Bootloader Program Memory Usage,
- * this is 490 bytes at optimization level -O3, so BOOTEND_FUSE = 0x02
- */
-#define BOOTEND_FUSE                (0x04)
-#define BOOT_SIZE                   (BOOTEND_FUSE * 0x100)
-#define MAPPED_APPLICATION_START    (MAPPED_PROGMEM_START + BOOT_SIZE)
-#define MAPPED_APPLICATION_SIZE     (MAPPED_PROGMEM_SIZE - BOOT_SIZE)
+// static uint8_t          data = 0;
+// static bool             eepromPresent = false;
 
-/* Fuse configuration
- * BOOTEND sets the size (end) of the boot section in blocks of 256 bytes.
- * APPEND = 0x00 defines the section from BOOTEND*256 to end of Flash as application code.
- * Remaining fuses have default configuration.
- */
-FUSES = {
-    .OSCCFG = FREQSEL_20MHZ_gc,
-    .SYSCFG0 = CRCSRC_NOCRC_gc | RSTPINCFG_UPDI_gc,
-    .SYSCFG1 = SUT_64MS_gc,
-    .APPEND = 0x00,
-    .BOOTEND = BOOTEND_FUSE
-};
-
-// Define application pointer type
-typedef void (*const appStart_t)(void);
+static firmwareCfg_t    firmwareConfig;
+static bootCfg_t        bootConfig;
 
 // Interface function prototypes
-static bool isBootloaderRequested(void);
-static bool isFirmwareTimestampMatch(void);
-static void i2cInit(void);
-static uint8_t i2cReceive(void);
-static void i2cSend(uint8_t byte);
+static inline bool isBootloaderRequested(void);
+static inline bool isFirmwareTimestampMatch(void);
+static inline bool isFirmwareMacOk(void);
+static inline void writeFirmware(void);
+static inline void loadBootloaderData(void);
 static void statusLedInit(void);
 static void statusLedToggle(void);
+
+void blink(uint8_t ton, uint8_t toff);
+void numToBlinks(uint8_t number);
 
 /**
  * Main boot function
@@ -69,7 +42,10 @@ __attribute__((naked)) __attribute__((section(".ctors"))) void boot(void)
 {
     asm volatile("clr r1");                                         // Initialize system for AVR GCC support, expects R1 = 0
 
-    twiInit(TWI_BAUD(F_CPU, F_SCL));                                // Initialize I2C interface in Master mode
+    statusLedInit();
+    // twiInit(TWI_BAUD(F_CPU, F_SCL, T_RISE));                        // Initialize I2C interface in Master mode
+    twiInit(17);
+
     if(!isBootloaderRequested())                                    // Check if entering application or continuing to bootloader
     {
         NVMCTRL.CTRLB = NVMCTRL_BOOTLOCK_bm;                        // Enable Boot Section Lock
@@ -79,14 +55,130 @@ __attribute__((naked)) __attribute__((section(".ctors"))) void boot(void)
         appStart();                                                 // Go to application, located immediately after boot section
     }
 
-    // Initialize communication interface
+    writeFirmware();                                                // Start programming at start for application section
+    _PROTECTED_WRITE(RSTCTRL.SWRR, RSTCTRL_SWRE_bm);                // Issue system reset
 
-    statusLedInit();
+    // while(true)
+    // {
+    //     if (eepromPresent)
+    //     {
+    //         // numToBlinks(data);
+    //     } else 
+    //     {
+    //         // blink(5, 45);
+    //     }
+    // }
+}
 
-    while(true)
-    {}
-    // // Start programming at start for application section
-    // // Subtract MAPPED_PROGMEM_START in condition to handle overflow on large flash sizes
+/**
+ * Boot access request function
+ */
+static inline bool isBootloaderRequested(void)
+{
+    register uint8_t result = false;
+
+    // eepromPresent = isDeviceOnBus(TWI_MEM_ADDR);
+
+    // if(eepromPresent)
+    if (isDeviceOnBus(TWI_MEM_ADDR))
+    {
+        loadBootloaderData();
+        if (!isFirmwareTimestampMatch() && isFirmwareMacOk())
+        {
+            result = true;
+        }
+
+    }
+
+    // return true;
+    return result;
+}
+
+static inline bool isFirmwareTimestampMatch(void)
+{
+    register uint8_t result = false;
+
+    if ((bootConfig.timeStamp != 0xFFFFFFFF) 
+        && (firmwareConfig.firmwareSize > 0) && (firmwareConfig.firmwareSize <= MAPPED_APPLICATION_SIZE)
+        && (firmwareConfig.timeStamp == bootConfig.timeStamp))
+    {
+        result = true;
+    }
+
+    return result;
+}
+
+static inline bool isFirmwareMacOk(void)
+{
+    uint32_t    startPos        = 0;
+    uint32_t    remainingBytes  = firmwareConfig.firmwareSize;
+    uint8_t     shift           = (firmwareConfig.firmwareSize < MAPPED_PROGMEM_PAGE_SIZE) ? firmwareConfig.firmwareSize : MAPPED_PROGMEM_PAGE_SIZE;
+    uint8_t     buffer[MAPPED_PROGMEM_PAGE_SIZE];
+    xteaCtx_t   ctx;
+
+    xteaCfbMacInit(&ctx, bootConfig.key, firmwareConfig.macRounds);
+    xteaCfbMacUpdate(&ctx, firmwareConfig.cipherIv, (XTEA_IV_SIZE + 8 + 2));
+
+    while (shift)
+    {
+        twiEepromRead(TWI_MEM_ADDR, (TWI_FIRMWARE_AT_ADDR + startPos), (uint8_t *)(&buffer), shift);
+        xteaCfbMacUpdate(&ctx, buffer, shift);
+
+        startPos += shift;
+        remainingBytes = firmwareConfig.firmwareSize - startPos;
+        if (remainingBytes < MAPPED_PROGMEM_PAGE_SIZE)
+        {
+            shift = remainingBytes;
+        }
+    }
+
+    xteaCfbMacFinish(&ctx);
+
+    return xteaCfbMacCmp(&ctx, firmwareConfig.firmwareMac);
+}
+
+static inline void writeFirmware(void)
+{
+    uint32_t        startPos        = 0;
+    uint32_t        remainingBytes  = firmwareConfig.firmwareSize;
+    uint8_t         shift           = (firmwareConfig.firmwareSize < XTEA_BLOCK_SIZE) ? firmwareConfig.firmwareSize : XTEA_BLOCK_SIZE;
+    uint8_t         buffer[XTEA_BLOCK_SIZE];
+    xteaCipherCtx_t ctx;
+
+    // xteaInit(&ctx, bootConfig.key, firmwareConfig.cipherIv, firmwareConfig.cipherRounds);
+    // xteaSetOperation(&ctx, xteaDecrypt);
+    xteaSetKey(&(ctx.base), bootConfig.key);
+    xteaSetIv(&ctx, firmwareConfig.cipherIv);
+    ctx.base.rounds = firmwareConfig.cipherRounds;
+    ctx.base.operation = xteaDecrypt;
+
+    uint8_t *appPtr = (uint8_t *)MAPPED_APPLICATION_START;
+    while (shift)
+    {
+        twiEepromRead(TWI_MEM_ADDR, (TWI_FIRMWARE_AT_ADDR + startPos), (uint8_t *)(&buffer), shift);
+        xteaCfbBlock(&ctx, (uint8_t *)(&buffer));
+        memcpy(appPtr, &buffer, shift);
+        appPtr += shift;
+
+        startPos += shift;
+        remainingBytes = firmwareConfig.firmwareSize - startPos;
+        if (remainingBytes < XTEA_BLOCK_SIZE)
+        {
+            shift = remainingBytes;
+            
+        }
+
+        if (!((uint16_t)appPtr % MAPPED_PROGMEM_PAGE_SIZE))
+        {
+            // Page boundary reached, Commit page to Flash
+            _PROTECTED_WRITE_SPM(NVMCTRL.CTRLA, NVMCTRL_CMD_PAGEERASEWRITE_gc);
+            while (NVMCTRL.STATUS & NVMCTRL_FBUSY_bm);
+
+            // statusLedToggle();
+        }
+    }
+
+    // Subtract MAPPED_PROGMEM_START in condition to handle overflow on large flash sizes
     // uint8_t *appPtr = (uint8_t *)MAPPED_APPLICATION_START;
     // while(appPtr - MAPPED_PROGMEM_START <= (uint8_t *)PROGMEM_END)
     // {
@@ -106,74 +198,46 @@ __attribute__((naked)) __attribute__((section(".ctors"))) void boot(void)
     //         statusLedToggle();
     //     }
     // }
-
-    // _PROTECTED_WRITE(RSTCTRL.SWRR, RSTCTRL_SWRE_bm);                // Issue system reset
 }
 
-/**
- * Boot access request function
- */
-static bool isBootloaderRequested(void)
+static inline void loadBootloaderData(void)
 {
-    if(isFirmwareTimestampMatch())
-    {
-
-    }
-    // if(VPORTC.IN & PIN5_bm)                                            // Check if SW1 (PC5) is low
-    // {
-    //     return false;
-    // }
-    return true;
+    twiEepromRead(TWI_MEM_ADDR, TWI_CONTROL_DATA_AT, (uint8_t *)(&firmwareConfig), sizeof(firmwareConfig));
+    eeprom_read_block((uint8_t *)&bootConfig, (uint8_t *)(MAPPED_EEPROM_END - sizeof(bootConfig)), sizeof(bootConfig));
 }
-
-static bool isFirmwareTimestampMatch(void)
-{
-    uint8_t data;
-
-    twiEnable();
-    twiStart(TWI_MEM_ADDR | 0x01);
-    // twiWrite(TWI_CONTROL_DATA_AT >> 8);
-    // twiWrite(TWI_CONTROL_DATA_AT & 0xFF);
-    // twiStart(TWI_MEM_ADDR);
-    // twiRead(&data, false);
-    twiStop();
-
-    return true;
-}
-/**
- * Communication interface functions
- */
-
-// static uint8_t i2cReceive(void)
-// {
-//     // i2c_driver.result = I2C_RESULT_WAITING;                          // Poll for transmission complete
-//     // while(i2c_driver.result != I2C_RESULT_OK)
-//     // {
-//     //    // i2c_slave_isr();
-//     // }
-
-//     // return i2c_driver.received_data[0];
-//     return 0x00;
-// }
-
-// static void i2cSend(uint8_t byte)
-// {
-//     // i2c_driver.send_data[0] = byte;
-
-//     // i2c_driver.result = I2C_RESULT_WAITING;                          // Poll for transmission complete
-//     // while(i2c_driver.result != I2C_RESULT_OK)
-//     // {
-//     //    i2c_slave_isr();
-//     // }
-// }
 
 static void statusLedInit(void)
 {
-    VPORTA.DIR |= PIN5_bm;                                          // Set LED0 (PA5) as output
-    VPORTA.OUT &= ~PIN5_bm;
+    VPORTA.DIR |= PIN5_bm;                                          // Set LED (PA5) as output
+    VPORTA.OUT |= PIN5_bm;                                          // LED off
+    // VPORTA.OUT &= ~PIN5_bm;                                         // LED on
 }
 
 static void statusLedToggle(void)
 {
     VPORTA.OUT ^= PIN5_bm;                                          // Toggle LED0 (PA5)
+}
+
+void blink(uint8_t ton, uint8_t toff)
+{
+    statusLedToggle();
+    _delay_ms(ton);
+    statusLedToggle();
+    _delay_ms(toff);
+}
+
+void numToBlinks(uint8_t number)
+{
+    blink(250, 100);
+    for (uint8_t i = 0; i < (number >> 0x04); i++)
+    {
+        blink(60, 60);
+    }
+    _delay_ms(200);
+    blink(250, 100);
+    for (uint8_t i = 0; i < (number & 0x0F); i++)
+    {
+        blink(60, 60);
+    }
+    _delay_ms(200);
 }

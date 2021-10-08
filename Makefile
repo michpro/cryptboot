@@ -23,7 +23,7 @@ RM := rm -rf
 BUILD_DIR := ./build
 SRC_DIR := ./src
 
-OPTIONS := -x c -funsigned-char -funsigned-bitfields -DNDEBUG -Os -ffunction-sections -fdata-sections -fpack-struct -fshort-enums -Wall -c -std=gnu99 -MD -MP -MF
+OPTIONS := -x c -funsigned-char -funsigned-bitfields -Os -ffunction-sections -fdata-sections -fpack-struct -fshort-enums -Wall -c -std=gnu99 -MD -MP -MF
 
 FILES := cryptboot twi_1 xtea
 OBJS :=  $(addsuffix .o, $(addprefix $(BUILD_DIR)/, $(FILES)))
@@ -35,7 +35,7 @@ $(BUILD_DIR)/cryptboot.o: $(SRC_DIR)/cryptboot.c
 	@echo Building file: $<
 	$(CC) $(OPTIONS) "$(@:%.o=%.d)" -MT"$(@:%.o=%.d)" -MT"$(@:%.o=%.o)" -o "$@" "$<" -mmcu=$(MCU_TARGET)
 	@echo Finished building: $<
-	
+
 $(BUILD_DIR)/twi_1.o: $(SRC_DIR)/twi_1.c
 	@echo Building file: $<
 	$(CC) $(OPTIONS) "$(@:%.o=%.d)" -MT"$(@:%.o=%.d)" -MT"$(@:%.o=%.o)" -o "$@" "$<" -mmcu=$(MCU_TARGET)
@@ -46,9 +46,13 @@ $(BUILD_DIR)/xtea.o: $(SRC_DIR)/xtea.c
 	$(CC) $(OPTIONS) "$(@:%.o=%.d)" -MT"$(@:%.o=%.d)" -MT"$(@:%.o=%.o)" -o "$@" "$<" -mmcu=$(MCU_TARGET)
 	@echo Finished building: $<
 
+ifeq ($(OS), windows)
+# On windows, SOME of the tool paths will need to have backslashes instead of forward slashes
+fixpath = $(subst /,\,$1)
+endif
 
 # All Target
-all: $(PROGRAM) 
+all: $(PROGRAM)
 
 $(PROGRAM): $(OBJS)
 	@echo Building target: $@
