@@ -35,5 +35,4 @@
 *.hex
 *.elf
 *.map
-.vscode/
 build/

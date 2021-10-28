@@ -5,7 +5,9 @@
 CryptBoot is an easy to install upgrade to the Arduino bootloader within Arduino boards. It provides the following features: 
 
 ---
+[Arduino portable](https://www.arduino.cc/en/Guide/PortableIDE)
 
+---
 ## Reporting bugs
 
 [Create an issue on GitHub](https://github.com/michpro/cryptboot/issues).
