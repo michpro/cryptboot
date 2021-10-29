@@ -1,0 +1,17 @@
+{
+    "version": 4,
+    "configurations": [
+        {
+            "name": "cryptboot",
+            "compilerPath": "${workspaceFolder}/../../packages/DxCore/tools/avr-gcc/7.3.0-atmel3.6.1-azduino4b/bin/avr-g++",
+            "intelliSenseMode": "gcc-x64",
+            "includePath": [],
+            "forcedInclude": [
+                "${workspaceFolder}/../../packages/DxCore/tools/avr-gcc/7.3.0-atmel3.6.1-azduino4b/avr/include/avr/iotn1614.h",
+                "${workspaceFolder}/../../packages/DxCore/tools/avr-gcc/7.3.0-atmel3.6.1-azduino4b/avr/include/avr/iom328p.h"
+            ],
+            "defines": ["__AVR_XMEGA__"],
+            "cStandard": "c99"
+        }
+    ]
+}
