@@ -37,6 +37,12 @@
 #include "twi_1.h"
 #include "xtea.h"
 
+// workaround for wrong version of <avr/eeprom.h> when compiling on Linux
+#if defined (NVMCTRL_STATUS) && defined (eeprom_is_ready)
+    #undef eeprom_is_ready
+    #define eeprom_is_ready()	bit_is_clear (NVMCTRL_STATUS, NVMCTRL_EEBUSY_bp)
+#endif
+
 // Fuse configuration
 // BOOTEND sets the size (end) of the boot section in blocks of 256 bytes.
 // APPEND = 0x00 defines the section from BOOTEND * 256 to end of Flash as application code.

@@ -9,6 +9,11 @@
 
 PROGRAM := cryptboot_x
 
+DOWNGRADE_ALLOWED = 
+ifneq ($(DOWNGRADE),)
+DOWNGRADE_ALLOWED = -DDOWNGRADE_ALLOWED
+endif
+
 ifneq ($(DOWNGRADE),)
 DOWNGRADE_ALLOWED = -DDOWNGRADE_ALLOWED
 else
@@ -30,14 +35,14 @@ endif
 ifneq ($(TOOL),)
 GCCROOT = $(TOOL)
 else
-GCCROOT = ..\..\packages\DxCore\tools\avr-gcc\7.3.0-atmel3.6.1-azduino4b\bin
+GCCROOT = ../../packages/DxCore/tools/avr-gcc/7.3.0-atmel3.6.1-azduino4b/bin
 endif
 
 QUOTE := "
-CC          = $(QUOTE)$(GCCROOT)\avr-gcc$(QUOTE)
-OBJCOPY     = $(QUOTE)$(GCCROOT)\avr-objcopy$(QUOTE)
-OBJDUMP     = $(QUOTE)$(GCCROOT)\avr-objdump$(QUOTE)
-PROGSIZE    = $(QUOTE)$(GCCROOT)\avr-size$(QUOTE)
+CC          = $(QUOTE)$(GCCROOT)/avr-gcc$(QUOTE)
+OBJCOPY     = $(QUOTE)$(GCCROOT)/avr-objcopy$(QUOTE)
+OBJDUMP     = $(QUOTE)$(GCCROOT)/avr-objdump$(QUOTE)
+PROGSIZE    = $(QUOTE)$(GCCROOT)/avr-size$(QUOTE)
 
 RM := rm -rf
 
@@ -54,27 +59,21 @@ OUTPUT_FILE := $(addprefix $(BUILD_DIR)/, $(PROGRAM))
 
 $(PROGRAM).o: $(addprefix $(SRC_DIR)/, $(PROGRAM).c)
 	mkdir $(BUILD_DIR:./%=%) || exit 0
-	@echo ************************************************************
-	@echo Building file: $<
-	@echo ************************************************************
+	$(info ************************************************************)
+	$(info Building file: $< )
+	$(info ************************************************************)
 	$(CC) $(OPTIONS) "$(subst _x,_$(TARGET).d,$(OUTPUT_FILE))" -o "$(subst _x,_$(TARGET).o,$(OUTPUT_FILE))" "$<" -mmcu=$(MCU_TARGET)
-	@echo ************************************************************
-	@echo Finished building: $<
-	@echo ************************************************************
 
 $(PROGRAM): $(addsuffix .o, $(FILES))
-	@echo ************************************************************
-	@echo Building target: $(subst _x,_$(TARGET),$(PROGRAM))
-	@echo ************************************************************
+	$(info ************************************************************)
+	$(info Building target: $(subst _x,_$(TARGET),$(PROGRAM)) )
+	$(info ************************************************************)
 	$(CC) -o "$(subst _x,_$(TARGET).elf,$(OUTPUT_FILE))" $(subst _x,_$(TARGET),$(OBJS)) -nostartfiles -Wl,-Map="$(subst _x,_$(TARGET).map,$(OUTPUT_FILE))" -Wl,--start-group -Wl,-lm  -Wl,--end-group -Wl,--gc-sections -Wl,--relax -mmcu=$(MCU_TARGET)
-	@echo ************************************************************
-	@echo Finished building target: $(subst _x,_$(TARGET),$(PROGRAM))
-	@echo ************************************************************
 	$(OBJDUMP) -d -M intel -S "$(subst _x,_$(TARGET).o,$(OUTPUT_FILE))" > "$(subst _x,_$(TARGET).lst,$(OUTPUT_FILE))"
 	$(OBJCOPY) -O ihex -R .eeprom -R .fuse -R .lock -R .signature -R .user_signatures "$(subst _x,_$(TARGET).elf,$(OUTPUT_FILE))" "$(subst _x,_$(TARGET).hex,$(OUTPUT_FILE))"
 	$(OBJCOPY) -O binary -j .text "$(subst _x,_$(TARGET).elf,$(OUTPUT_FILE))" "$(subst _x,_$(TARGET).bin,$(OUTPUT_FILE))"
 	$(PROGSIZE) "$(subst _x,_$(TARGET).elf,$(OUTPUT_FILE))"
-	@echo ************************************************************
+
 
 .PHONY: clean all
 
